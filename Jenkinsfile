@@ -78,34 +78,35 @@ stage('Plan') {
 }
 
 
-    stage('Validate & Apply') {
-      when {
-        branch 'dev'
-      }
-      steps {
-        script {
-          input message: 'Approve apply to dev?', ok: 'Apply'
+stage('Validate & Apply') {
+  when {
+    branch 'dev'
+  }
+  steps {
+    input message: 'Approve apply to dev?', ok: 'Apply'
 
-          def branch = env.BRANCH_NAME ?: env.GIT_BRANCH ?: 'dev'
+    withCredentials([
+      string(credentialsId: 'AWS_ACCESS_KEY_ID', variable: 'AWS_ACCESS_KEY_ID'),
+      string(credentialsId: 'AWS_SECRET_ACCESS_KEY', variable: 'AWS_SECRET_ACCESS_KEY'),
+      sshUserPrivateKey(
+        credentialsId: 'ansible-ssh-key',
+        keyFileVariable: 'SSH_KEY',
+        usernameVariable: 'SSH_USER'
+      )
+    ]) {
+      sh '''
+        export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+        export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
 
-          withCredentials([
-            string(credentialsId: 'AWS_ACCESS_KEY_ID', variable: 'AWS_ACCESS_KEY_ID'),
-            string(credentialsId: 'AWS_SECRET_ACCESS_KEY', variable: 'AWS_SECRET_ACCESS_KEY'),
-            sshUserPrivateKey(
-              credentialsId: 'ansible-ssh-key',
-              keyFileVariable: 'SSH_KEY',
-              usernameVariable: 'SSH_USER'
-            )
-          ]) {
-            sh '''
-              export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
-              export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+        echo "Applying Terraform plan for branch: $BRANCH_NAME"
+        ls -l plan-*.tfplan
 
-              terraform apply -auto-approve plan-${branch}.tfplan
-            '''
-          }
-        }
-      }
+        terraform apply -auto-approve plan-${BRANCH_NAME}.tfplan
+      '''
+    }
+  }
+}
+
     }
   }
 }
