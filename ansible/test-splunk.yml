@@ -1,0 +1,5 @@
+---
+- hosts: splunk
+  tasks:
+    - name: Verify Splunk service is running
+      shell: ps -ef | grep splunkd | grep -v grep
