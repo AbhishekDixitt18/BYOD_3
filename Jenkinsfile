@@ -2,102 +2,190 @@ pipeline {
     agent any
 
     environment {
-        TF_IN_AUTOMATION = '1'
-        TF_CLI_ARGS = '-no-color'
+        TF_IN_AUTOMATION = 'true'
+        TF_INPUT = 'false'
+        ANSIBLE_HOST_KEY_CHECKING = 'False'
+        AWS_REGION = 'us-east-1'
     }
 
     stages {
 
-        // =========================
-        // STAGE 1: TERRAFORM INIT
-        // =========================
-        stage('Init') {
+        // =====================================================
+        // STAGE 1: CHECKOUT
+        // =====================================================
+        stage('📥 Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        // =====================================================
+        // STAGE 2: TERRAFORM INIT
+        // =====================================================
+        stage('🔧 Terraform Init') {
             steps {
                 withCredentials([
                     string(credentialsId: 'AWS_ACCESS_KEY_ID', variable: 'AWS_ACCESS_KEY_ID'),
                     string(credentialsId: 'AWS_SECRET_ACCESS_KEY', variable: 'AWS_SECRET_ACCESS_KEY')
                 ]) {
                     sh '''
-                        export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
-                        export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
-
-                        echo "Initializing Terraform..."
-                        terraform init
+                      export AWS_ACCESS_KEY_ID
+                      export AWS_SECRET_ACCESS_KEY
+                      terraform init
                     '''
                 }
             }
         }
 
-        // ======================================
-        // STAGE 2: INSPECT BRANCH TFVARS (TASK 3)
-        // ======================================
-        stage('Inspect TFVARS') {
+        // =====================================================
+        // STAGE 3: TERRAFORM APPLY
+        // =====================================================
+        stage('🚀 Terraform Apply') {
+            steps {
+                withCredentials([
+                    string(credentialsId: 'AWS_ACCESS_KEY_ID', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'AWS_SECRET_ACCESS_KEY', variable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
+                    sh '''
+                      export AWS_ACCESS_KEY_ID
+                      export AWS_SECRET_ACCESS_KEY
+
+                      terraform apply \
+                        -auto-approve \
+                        -var-file=${BRANCH_NAME}.tfvars
+                    '''
+                }
+            }
+        }
+
+        // =====================================================
+        // STAGE 4: CAPTURE OUTPUTS
+        // =====================================================
+        stage('📤 Capture Terraform Outputs') {
+            steps {
+                script {
+                    env.INSTANCE_ID = sh(
+                        script: "terraform output -raw instance_id",
+                        returnStdout: true
+                    ).trim()
+
+                    env.INSTANCE_IP = sh(
+                        script: "terraform output -raw instance_public_ip",
+                        returnStdout: true
+                    ).trim()
+
+                    echo "Instance ID: ${env.INSTANCE_ID}"
+                    echo "Instance IP: ${env.INSTANCE_IP}"
+                }
+            }
+        }
+
+        // =====================================================
+        // STAGE 5: DYNAMIC INVENTORY
+        // =====================================================
+        stage('📄 Generate Dynamic Inventory') {
             steps {
                 sh '''
-                    echo "Inspecting tfvars for branch: $BRANCH_NAME"
-
-                    if [ -f ${BRANCH_NAME}.tfvars ]; then
-                        echo "===== ${BRANCH_NAME}.tfvars ====="
-                        cat ${BRANCH_NAME}.tfvars
-                        echo "==============================="
-                    else
-                        echo "ERROR: ${BRANCH_NAME}.tfvars not found"
-                        exit 1
-                    fi
+                  cat <<EOF > dynamic_inventory.ini
+[splunk]
+${INSTANCE_IP} ansible_user=ubuntu ansible_ssh_private_key_file=byod-key.pem
+EOF
                 '''
             }
         }
 
-        // ======================================
-        // STAGE 3: TERRAFORM PLAN (TASK 4)
-        // ======================================
-        stage('Plan') {
+        // =====================================================
+        // STAGE 6: AWS HEALTH CHECK
+        // =====================================================
+        stage('🩺 AWS Health Check') {
             steps {
                 withCredentials([
                     string(credentialsId: 'AWS_ACCESS_KEY_ID', variable: 'AWS_ACCESS_KEY_ID'),
                     string(credentialsId: 'AWS_SECRET_ACCESS_KEY', variable: 'AWS_SECRET_ACCESS_KEY')
                 ]) {
                     sh '''
-                        export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
-                        export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+                      export AWS_ACCESS_KEY_ID
+                      export AWS_SECRET_ACCESS_KEY
 
-                        echo "Running Terraform plan for branch: $BRANCH_NAME"
-
-                        terraform plan \
-                          -var-file=${BRANCH_NAME}.tfvars \
-                          -out=plan-${BRANCH_NAME}.tfplan
-
-                        terraform show -no-color plan-${BRANCH_NAME}.tfplan
+                      aws ec2 wait instance-status-ok \
+                        --instance-ids ${INSTANCE_ID} \
+                        --region ${AWS_REGION}
                     '''
                 }
             }
         }
 
-        // =================================================
-        // STAGE 4: MANUAL APPROVAL (DEV ONLY) – TASK 5
-        // =================================================
-        stage('Validate & Apply') {
-            when {
-                branch 'dev'
-            }
+        // =====================================================
+        // STAGE 7: SPLUNK INSTALL
+        // =====================================================
+        stage('📦 Install Splunk') {
             steps {
-                input message: 'Approve apply to dev?', ok: 'Apply'
-
                 sh '''
-                    echo "Apply approved for branch: $BRANCH_NAME"
-                    echo "Terraform apply intentionally skipped"
-                    echo "Reason: BYOD-3 focuses on infrastructure planning & approval workflow"
+                  ansible-playbook \
+                    -i dynamic_inventory.ini \
+                    ansible/splunk.yml
+                '''
+            }
+        }
+
+        // =====================================================
+        // STAGE 8: SPLUNK VERIFICATION
+        // =====================================================
+        stage('✅ Verify Splunk') {
+            steps {
+                sh '''
+                  ansible-playbook \
+                    -i dynamic_inventory.ini \
+                    ansible/test-splunk.yml
+                '''
+            }
+        }
+
+        // =====================================================
+        // STAGE 9: VALIDATE DESTROY
+        // =====================================================
+        stage('🛑 Validate Destroy') {
+            steps {
+                input message: 'Do you really want to destroy the infrastructure?',
+                      ok: 'Yes, Destroy'
+            }
+        }
+
+        // =====================================================
+        // STAGE 10: TERRAFORM DESTROY
+        // =====================================================
+        stage('🔥 Terraform Destroy') {
+            steps {
+                sh '''
+                  terraform destroy \
+                    -auto-approve \
+                    -var-file=${BRANCH_NAME}.tfvars
                 '''
             }
         }
     }
 
+    // =====================================================
+    // POST ACTIONS
+    // =====================================================
     post {
-        success {
-            echo "Pipeline completed successfully for branch: ${env.BRANCH_NAME}"
+        always {
+            echo "🧹 Cleaning up dynamic inventory"
+            sh 'rm -f dynamic_inventory.ini'
         }
+
         failure {
-            echo "Pipeline failed for branch: ${env.BRANCH_NAME}"
+            echo "❌ Pipeline failed — destroying infra"
+            sh 'terraform destroy -auto-approve -var-file=${BRANCH_NAME}.tfvars || true'
+        }
+
+        aborted {
+            echo "⚠️ Pipeline aborted — destroying infra"
+            sh 'terraform destroy -auto-approve -var-file=${BRANCH_NAME}.tfvars || true'
+        }
+
+        success {
+            echo "✅ BYOD-3 Pipeline completed successfully"
         }
     }
 }
