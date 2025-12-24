@@ -83,16 +83,18 @@ pipeline {
         // =====================================================
         // STAGE 5: DYNAMIC INVENTORY
         // =====================================================
+
         stage('📄 Generate Dynamic Inventory') {
-            steps {
-                sh '''
-                  cat <<EOF > dynamic_inventory.ini
+    steps {
+        sh '''
+          cat <<EOF > dynamic_inventory.ini
 [splunk]
-${INSTANCE_IP} ansible_user=ubuntu ansible_ssh_private_key_file=byod-key.pem
+${INSTANCE_IP} ansible_user=ubuntu
 EOF
-                '''
-            }
-        }
+        '''
+    }
+}
+
 
         // =====================================================
         // STAGE 6: AWS HEALTH CHECK
@@ -119,27 +121,47 @@ EOF
         // STAGE 7: SPLUNK INSTALL
         // =====================================================
         stage('📦 Install Splunk') {
-            steps {
-                sh '''
-                  ansible-playbook \
-                    -i dynamic_inventory.ini \
-                    ansible/splunk.yml
-                '''
-            }
+    steps {
+        withCredentials([
+            sshUserPrivateKey(
+                credentialsId: 'ansible-ssh-key',
+                keyFileVariable: 'SSH_KEY'
+            )
+        ]) {
+            sh '''
+              chmod 600 $SSH_KEY
+              ansible-playbook \
+                -i dynamic_inventory.ini \
+                --private-key $SSH_KEY \
+                ansible/splunk.yml
+            '''
         }
+    }
+}
+
 
         // =====================================================
         // STAGE 8: SPLUNK VERIFICATION
         // =====================================================
         stage('✅ Verify Splunk') {
-            steps {
-                sh '''
-                  ansible-playbook \
-                    -i dynamic_inventory.ini \
-                    ansible/test-splunk.yml
-                '''
-            }
+    steps {
+        withCredentials([
+            sshUserPrivateKey(
+                credentialsId: 'ansible-ssh-key',
+                keyFileVariable: 'SSH_KEY'
+            )
+        ]) {
+            sh '''
+              chmod 600 $SSH_KEY
+              ansible-playbook \
+                -i dynamic_inventory.ini \
+                --private-key $SSH_KEY \
+                ansible/test-splunk.yml
+            '''
         }
+    }
+}
+
 
         // =====================================================
         // STAGE 9: VALIDATE DESTROY
