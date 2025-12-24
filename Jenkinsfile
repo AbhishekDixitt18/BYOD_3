@@ -74,8 +74,8 @@ pipeline {
                         returnStdout: true
                     ).trim()
 
-                    echo "Instance ID: ${env.INSTANCE_ID}"
-                    echo "Instance IP: ${env.INSTANCE_IP}"
+                    echo "INSTANCE_ID = ${env.INSTANCE_ID}"
+                    echo "INSTANCE_IP = ${env.INSTANCE_IP}"
                 }
             }
         }
@@ -83,18 +83,16 @@ pipeline {
         // =====================================================
         // STAGE 5: DYNAMIC INVENTORY
         // =====================================================
-
         stage('📄 Generate Dynamic Inventory') {
-    steps {
-        sh '''
-          cat <<EOF > dynamic_inventory.ini
+            steps {
+                sh '''
+                  cat <<EOF > dynamic_inventory.ini
 [splunk]
 ${INSTANCE_IP} ansible_user=ubuntu
 EOF
-        '''
-    }
-}
-
+                '''
+            }
+        }
 
         // =====================================================
         // STAGE 6: AWS HEALTH CHECK
@@ -121,47 +119,45 @@ EOF
         // STAGE 7: SPLUNK INSTALL
         // =====================================================
         stage('📦 Install Splunk') {
-    steps {
-        withCredentials([
-            sshUserPrivateKey(
-                credentialsId: 'ansible-ssh-key',
-                keyFileVariable: 'SSH_KEY'
-            )
-        ]) {
-            sh '''
-              chmod 600 $SSH_KEY
-              ansible-playbook \
-                -i dynamic_inventory.ini \
-                --private-key $SSH_KEY \
-                ansible/splunk.yml
-            '''
+            steps {
+                withCredentials([
+                    sshUserPrivateKey(
+                        credentialsId: 'ansible-ssh-key',
+                        keyFileVariable: 'SSH_KEY'
+                    )
+                ]) {
+                    sh '''
+                      chmod 600 $SSH_KEY
+                      ansible-playbook \
+                        -i dynamic_inventory.ini \
+                        --private-key $SSH_KEY \
+                        ansible/splunk.yml
+                    '''
+                }
+            }
         }
-    }
-}
-
 
         // =====================================================
         // STAGE 8: SPLUNK VERIFICATION
         // =====================================================
         stage('✅ Verify Splunk') {
-    steps {
-        withCredentials([
-            sshUserPrivateKey(
-                credentialsId: 'ansible-ssh-key',
-                keyFileVariable: 'SSH_KEY'
-            )
-        ]) {
-            sh '''
-              chmod 600 $SSH_KEY
-              ansible-playbook \
-                -i dynamic_inventory.ini \
-                --private-key $SSH_KEY \
-                ansible/test-splunk.yml
-            '''
+            steps {
+                withCredentials([
+                    sshUserPrivateKey(
+                        credentialsId: 'ansible-ssh-key',
+                        keyFileVariable: 'SSH_KEY'
+                    )
+                ]) {
+                    sh '''
+                      chmod 600 $SSH_KEY
+                      ansible-playbook \
+                        -i dynamic_inventory.ini \
+                        --private-key $SSH_KEY \
+                        ansible/test-splunk.yml
+                    '''
+                }
+            }
         }
-    }
-}
-
 
         // =====================================================
         // STAGE 9: VALIDATE DESTROY
@@ -178,11 +174,19 @@ EOF
         // =====================================================
         stage('🔥 Terraform Destroy') {
             steps {
-                sh '''
-                  terraform destroy \
-                    -auto-approve \
-                    -var-file=${BRANCH_NAME}.tfvars
-                '''
+                withCredentials([
+                    string(credentialsId: 'AWS_ACCESS_KEY_ID', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'AWS_SECRET_ACCESS_KEY', variable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
+                    sh '''
+                      export AWS_ACCESS_KEY_ID
+                      export AWS_SECRET_ACCESS_KEY
+
+                      terraform destroy \
+                        -auto-approve \
+                        -var-file=${BRANCH_NAME}.tfvars
+                    '''
+                }
             }
         }
     }
@@ -198,12 +202,30 @@ EOF
 
         failure {
             echo "❌ Pipeline failed — destroying infra"
-            sh 'terraform destroy -auto-approve -var-file=${BRANCH_NAME}.tfvars || true'
+            withCredentials([
+                string(credentialsId: 'AWS_ACCESS_KEY_ID', variable: 'AWS_ACCESS_KEY_ID'),
+                string(credentialsId: 'AWS_SECRET_ACCESS_KEY', variable: 'AWS_SECRET_ACCESS_KEY')
+            ]) {
+                sh '''
+                  export AWS_ACCESS_KEY_ID
+                  export AWS_SECRET_ACCESS_KEY
+                  terraform destroy -auto-approve -var-file=${BRANCH_NAME}.tfvars || true
+                '''
+            }
         }
 
         aborted {
             echo "⚠️ Pipeline aborted — destroying infra"
-            sh 'terraform destroy -auto-approve -var-file=${BRANCH_NAME}.tfvars || true'
+            withCredentials([
+                string(credentialsId: 'AWS_ACCESS_KEY_ID', variable: 'AWS_ACCESS_KEY_ID'),
+                string(credentialsId: 'AWS_SECRET_ACCESS_KEY', variable: 'AWS_SECRET_ACCESS_KEY')
+            ]) {
+                sh '''
+                  export AWS_ACCESS_KEY_ID
+                  export AWS_SECRET_ACCESS_KEY
+                  terraform destroy -auto-approve -var-file=${BRANCH_NAME}.tfvars || true
+                '''
+            }
         }
 
         success {
