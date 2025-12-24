@@ -27,7 +27,7 @@ data "aws_ami" "ubuntu" {
 }
 
 resource "aws_security_group" "ssh_sg" {
-  name        = "allow_ssh_byod3"
+  name_prefix      = "allow_ssh_byod3-"
   description = "Allow SSH access for Ansible"
 
   ingress {
