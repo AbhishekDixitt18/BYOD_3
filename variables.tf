@@ -1,11 +1,9 @@
 variable "region" {
-  type    = string
-  default = "us-east-1"
-  description = "The AWS region to deploy to."
+  description = "AWS region"
+  type        = string
 }
 
 variable "instance_type" {
-  type    = string
-  default = "t2.micro"
-  description = "The EC2 instance type."
+  description = "EC2 instance type"
+  type        = string
 }

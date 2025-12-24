@@ -1,0 +1,20 @@
+---
+- hosts: splunk
+  become: yes
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Download Splunk
+      get_url:
+        url: https://download.splunk.com/products/splunk/releases/9.1.1/linux/splunk-9.1.1-64e843ea36b1-linux-2.6-amd64.deb
+        dest: /tmp/splunk.deb
+
+    - name: Install Splunk
+      apt:
+        deb: /tmp/splunk.deb
+
+    - name: Start Splunk
+      command: /opt/splunk/bin/splunk start --accept-license --answer-yes --no-prompt
